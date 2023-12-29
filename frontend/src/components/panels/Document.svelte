@@ -179,7 +179,7 @@
 
 		await tick();
 
-		const placeholders = window.document.querySelectorAll("[data-viewport] [data-canvas-placeholder]");
+		const placeholders = window.document.querySelectorAll("[data-viewport-container] [data-canvas-placeholder]");
 		// Replace the placeholders with the actual canvas elements
 		placeholders.forEach((placeholder) => {
 			const canvasName = placeholder.getAttribute("data-canvas-placeholder");
@@ -471,7 +471,7 @@
 						<RulerInput origin={rulerOrigin.y} majorMarkSpacing={rulerSpacing} numberInterval={rulerInterval} direction="Vertical" bind:this={rulerVertical} />
 					</LayoutCol>
 				{/if}
-				<LayoutCol class="viewport-container" styles={{ cursor: canvasCursor }}>
+				<LayoutCol class="viewport-container" styles={{ cursor: canvasCursor }} data-viewport-container>
 					{#if cursorEyedropper}
 						<EyedropperPreview
 							colorChoice={cursorEyedropperPreviewColorChoice}
@@ -482,7 +482,7 @@
 							y={cursorTop}
 						/>
 					{/if}
-					<div class="viewport" on:pointerdown={(e) => canvasPointerDown(e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => pasteFile(e)} bind:this={viewport} data-viewport>
+					<div class="viewport" on:pointerdown={(e) => canvasPointerDown(e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => pasteFile(e)} bind:this={viewport}>
 						<svg class="artboards" style:width={canvasWidthCSS} style:height={canvasHeightCSS}>
 							{@html artworkSvg}
 						</svg>

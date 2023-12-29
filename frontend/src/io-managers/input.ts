@@ -23,9 +23,11 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 
 	let viewportPointerInteractionOngoing = false;
 	let textToolInteractiveInputElement = undefined as undefined | HTMLDivElement;
-	let canvasFocused = true;
+	let viewportFocused = true;
 
-	// Event listeners
+	// ===============
+	// EVENT LISTENERS
+	// ===============
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const listeners: { target: EventListenerTarget; eventName: EventName; action: (event: any) => void; options?: AddEventListenerOptions }[] = [
@@ -40,13 +42,15 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 		{ target: window, eventName: "mouseup", action: (e: MouseEvent) => onPotentialDoubleClick(e) },
 		{ target: window, eventName: "wheel", action: (e: WheelEvent) => onWheelScroll(e), options: { passive: false } },
 		{ target: window, eventName: "modifyinputfield", action: (e: CustomEvent) => onModifyInputField(e) },
-		{ target: window, eventName: "focusout", action: () => (canvasFocused = false) },
+		{ target: window, eventName: "focusout", action: () => (viewportFocused = false) },
 		{ target: window.document, eventName: "contextmenu", action: (e: MouseEvent) => onContextMenu(e) },
 		{ target: window.document, eventName: "fullscreenchange", action: () => fullscreen.fullscreenModeChanged() },
 		{ target: window.document.body, eventName: "paste", action: (e: ClipboardEvent) => onPaste(e) },
 	];
 
-	// Event bindings
+	// ==============
+	// EVENT BINDINGS
+	// ==============
 
 	function bindListeners() {
 		// Add event bindings for the lifetime of the application
@@ -57,7 +61,9 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 		listeners.forEach(({ target, eventName, action, options }) => target.removeEventListener(eventName, action, options));
 	}
 
-	// Keyboard events
+	// ===============
+	// KEYBOARD EVENTS
+	// ===============
 
 	async function shouldRedirectKeyboardEventToBackend(e: KeyboardEvent): Promise<boolean> {
 		// Don't redirect when a dialog is covering the workspace
@@ -89,8 +95,11 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 		if (["F12", "F8"].includes(key)) return false;
 		if (["KeyC", "KeyI", "KeyJ"].includes(key) && accelKey && e.shiftKey) return false;
 
-		// Don't redirect tab or enter if not in canvas (to allow navigating elements)
-		if (!canvasFocused && !targetIsTextField(e.target || undefined) && ["Tab", "Enter", "NumpadEnter", "Space", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(key)) return false;
+		// Don't redirect tab or enter if not in the viewport (to allow navigating elements)
+		if (!viewportFocused && !targetIsTextField(e.target || undefined) && ["Tab", "Enter", "NumpadEnter", "Space", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(key)) {
+			console.log("Exiting early");
+			return false;
+		}
 
 		// Redirect to the backend
 		return true;
@@ -124,11 +133,21 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 		}
 	}
 
-	// Pointer events
+	// ==============
+	// POINTER EVENTS
+	// ==============
 
 	// While any pointer button is already down, additional button down events are not reported, but they are sent as `pointermove` events and these are handled in the backend
 	function onPointerMove(e: PointerEvent) {
 		if (!e.buttons) viewportPointerInteractionOngoing = false;
+
+		const inViewport = (e.target instanceof Element && e.target.closest("[data-viewport-container]")) instanceof Element;
+		const inTextInput = targetIsTextField(window.document.activeElement || undefined);
+		console.log("onPointerMove:", inViewport, inTextInput, viewportFocused, "|", e.target);
+		if (inViewport && !inTextInput && !viewportFocused) {
+			viewportFocused = true;
+			app?.focus();
+		}
 
 		// Don't redirect pointer movement to the backend if there's no ongoing interaction and it's over a floating menu, or the graph overlay, on top of the canvas
 		// TODO: A better approach is to pass along a boolean to the backend's input preprocessor so it can know if it's being occluded by the GUI.
@@ -136,29 +155,19 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 		// TODO: Further explanation: https://github.com/GraphiteEditor/Graphite/pull/623#discussion_r866436197
 		const inFloatingMenu = e.target instanceof Element && e.target.closest("[data-floating-menu-content]");
 		const inGraphOverlay = get(document).graphViewOverlayOpen;
-		if (!viewportPointerInteractionOngoing && (inFloatingMenu || inGraphOverlay)) return;
-
-		const { target } = e;
-		const newInCanvasArea = (target instanceof Element && target.closest("[data-viewport], [data-graph]")) instanceof Element && !targetIsTextField(window.document.activeElement || undefined);
-		if (newInCanvasArea && !canvasFocused) {
-			canvasFocused = true;
-			app?.focus();
+		if (!viewportPointerInteractionOngoing && (inFloatingMenu || inGraphOverlay)) {
+			console.log("Exiting here", viewportPointerInteractionOngoing, inFloatingMenu, inGraphOverlay);
+			return;
 		}
 
 		const modifiers = makeKeyboardModifiersBitfield(e);
 		editor.instance.onMouseMove(e.clientX, e.clientY, e.buttons, modifiers);
 	}
 
-	function onMouseDown(e: MouseEvent) {
-		// Block middle mouse button auto-scroll mode (the circlar gizmo that appears and allows quick scrolling by moving the cursor above or below it)
-		if (e.button === 1) e.preventDefault();
-	}
-
 	function onPointerDown(e: PointerEvent) {
-		const { target } = e;
-		const isTargetingCanvas = target instanceof Element && target.closest("[data-viewport]");
-		const inDialog = target instanceof Element && target.closest("[data-dialog] [data-floating-menu-content]");
-		const inTextInput = target === textToolInteractiveInputElement;
+		const inViewport = e.target instanceof Element && e.target.closest("[data-viewport-container]") instanceof Element;
+		const inDialog = e.target instanceof Element && e.target.closest("[data-dialog] [data-floating-menu-content]") instanceof Element;
+		const inTextInput = e.target === textToolInteractiveInputElement;
 
 		if (get(dialog).visible && !inDialog) {
 			dialog.dismissDialog();
@@ -168,7 +177,7 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 
 		if (!inTextInput) {
 			if (textToolInteractiveInputElement) editor.instance.onChangeText(textInputCleanup(textToolInteractiveInputElement.innerText));
-			else viewportPointerInteractionOngoing = isTargetingCanvas instanceof Element;
+			else viewportPointerInteractionOngoing = inViewport;
 		}
 
 		if (viewportPointerInteractionOngoing) {
@@ -184,6 +193,37 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 
 		const modifiers = makeKeyboardModifiersBitfield(e);
 		editor.instance.onMouseUp(e.clientX, e.clientY, e.buttons, modifiers);
+	}
+
+	// ============
+	// WHEEL EVENTS
+	// ============
+
+	function onWheelScroll(e: WheelEvent) {
+		const isTargetingViewport = e.target instanceof Element && e.target.closest("[data-viewport-container]");
+
+		// Redirect vertical scroll wheel movement into a horizontal scroll on a horizontally scrollable element
+		// There seems to be no possible way to properly employ the browser's smooth scrolling interpolation
+		const horizontalScrollableElement = e.target instanceof Element && e.target.closest("[data-scrollable-x]");
+		if (horizontalScrollableElement && e.deltaY !== 0) {
+			horizontalScrollableElement.scrollTo(horizontalScrollableElement.scrollLeft + e.deltaY, 0);
+			return;
+		}
+
+		if (isTargetingViewport) {
+			e.preventDefault();
+			const modifiers = makeKeyboardModifiersBitfield(e);
+			editor.instance.onWheelScroll(e.clientX, e.clientY, e.buttons, e.deltaX, e.deltaY, e.deltaZ, modifiers);
+		}
+	}
+
+	// ============
+	// MOUSE EVENTS
+	// ============
+
+	function onMouseDown(e: MouseEvent) {
+		// Block middle mouse button auto-scroll mode (the circlar gizmo that appears and allows quick scrolling by moving the cursor above or below it)
+		if (e.button === 1) e.preventDefault();
 	}
 
 	function onPotentialDoubleClick(e: MouseEvent) {
@@ -202,32 +242,15 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 		editor.instance.onDoubleClick(e.clientX, e.clientY, buttons, modifiers);
 	}
 
-	// Mouse events
-
-	function onWheelScroll(e: WheelEvent) {
-		const { target } = e;
-		const isTargetingCanvas = target instanceof Element && target.closest("[data-viewport]");
-
-		// Redirect vertical scroll wheel movement into a horizontal scroll on a horizontally scrollable element
-		// There seems to be no possible way to properly employ the browser's smooth scrolling interpolation
-		const horizontalScrollableElement = target instanceof Element && target.closest("[data-scrollable-x]");
-		if (horizontalScrollableElement && e.deltaY !== 0) {
-			horizontalScrollableElement.scrollTo(horizontalScrollableElement.scrollLeft + e.deltaY, 0);
-			return;
-		}
-
-		if (isTargetingCanvas) {
-			e.preventDefault();
-			const modifiers = makeKeyboardModifiersBitfield(e);
-			editor.instance.onWheelScroll(e.clientX, e.clientY, e.buttons, e.deltaX, e.deltaY, e.deltaZ, modifiers);
-		}
-	}
-
 	function onContextMenu(e: MouseEvent) {
 		if (!targetIsTextField(e.target || undefined) && e.target !== textToolInteractiveInputElement) {
 			e.preventDefault();
 		}
 	}
+
+	// =============
+	// CUSTOM EVENTS
+	// =============
 
 	// Receives a custom event dispatched when the user begins interactively editing with the text tool.
 	// We keep a copy of the text input element to check against when it's active for text entry.
@@ -235,10 +258,12 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 		textToolInteractiveInputElement = e.detail;
 	}
 
-	// Window events
+	// =============
+	// WINDOW EVENTS
+	// =============
 
 	function onWindowResize(container: HTMLElement) {
-		const viewports = Array.from(container.querySelectorAll("[data-viewport]"));
+		const viewports = Array.from(container.querySelectorAll("[data-viewport-container]"));
 		const boundsOfViewports = viewports.map((canvas) => {
 			const bounds = canvas.getBoundingClientRect();
 			return [bounds.left, bounds.top, bounds.right, bounds.bottom];
@@ -299,7 +324,9 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 		});
 	}
 
-	// Frontend message subscriptions
+	// ==============================
+	// FRONTEND MESSAGE SUBSCRIPTIONS
+	// ==============================
 
 	editor.subscriptions.subscribeJsMessage(TriggerPaste, async () => {
 		// In the try block, attempt to read from the Clipboard API, which may not have permission and may not be supported in all browsers
@@ -382,7 +409,9 @@ export function createInputManager(editor: Editor, dialog: DialogState, portfoli
 		}
 	});
 
-	// Initialization
+	// ==============
+	// INITIALIZATION
+	// ==============
 
 	// Bind the event listeners
 	bindListeners();
